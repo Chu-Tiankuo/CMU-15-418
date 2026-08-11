@@ -1,0 +1,31 @@
+Rendering to 1000x1000 image
+Loaded scene with 10000 circles
+Loaded scene with 10000 circles
+---------------------------------------------------------
+Initializing CUDA for CudaRenderer
+Found 3 CUDA devices
+Device 0: NVIDIA GeForce RTX 3090
+   SMs:        82
+   Global mem: 24260 MB
+   CUDA Cap:   8.6
+Device 1: NVIDIA GeForce RTX 3090
+   SMs:        82
+   Global mem: 24260 MB
+   CUDA Cap:   8.6
+Device 2: NVIDIA GeForce RTX 3090
+   SMs:        82
+   Global mem: 24260 MB
+   CUDA Cap:   8.6
+---------------------------------------------------------
+WARNING: You're not running on a fast GPU, please consider using NVIDIA GTX 480, 670 or 780.
+---------------------------------------------------------
+
+Running benchmark, 1 frames, beginning at frame 0 ...
+Copying image data from device
+***************** Correctness check passed **************************
+Clear:    0.1355 ms
+Advance:  0.0009 ms
+Render:   19.4389 ms
+Total:    19.5754 ms
+
+Overall:  6.0554 sec (note units are seconds)
