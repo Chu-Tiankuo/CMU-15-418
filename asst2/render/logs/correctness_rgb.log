@@ -23,9 +23,9 @@ WARNING: You're not running on a fast GPU, please consider using NVIDIA GTX 480,
 Running benchmark, 1 frames, beginning at frame 0 ...
 Copying image data from device
 ***************** Correctness check passed **************************
-Clear:    0.1230 ms
+Clear:    0.0855 ms
 Advance:  0.0010 ms
-Render:   0.1034 ms
-Total:    0.2274 ms
+Render:   0.0558 ms
+Total:    0.1422 ms
 
-Overall:  0.0218 sec (note units are seconds)
+Overall:  0.0215 sec (note units are seconds)

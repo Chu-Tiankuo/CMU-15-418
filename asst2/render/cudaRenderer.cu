@@ -14,7 +14,8 @@
 #include "sceneLoader.h"
 #include "util.h"
 #include "circleBoxTest.cu_inl"
-
+#define SCAN_BLOCK_DIM 256
+#include "exclusiveScan.cu_inl"
 ////////////////////////////////////////////////////////////////////////////////////////
 // All cuda kernels here
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -427,16 +428,18 @@ __global__ void kernelRenderCircles() {
     }
 }
 */
+template<int BLOCK_SIZE>
 __global__ void kernelRenderPixels() {
 
     int pixelX = blockIdx.x * blockDim.x + threadIdx.x;
     int pixelY = blockIdx.y * blockDim.y + threadIdx.y;
+    int threadId=threadIdx.y*blockDim.x+threadIdx.x;
 
     int width = cuConstRendererParams.imageWidth;
     int height = cuConstRendererParams.imageHeight;
     int numCircles = cuConstRendererParams.numCircles;
 
-    if (pixelX >= width || pixelY >= height)return;
+    bool isValidPixel=pixelX < width && pixelY < height;
 
     float invWidth = 1.f / width;
     float invHeight = 1.f / height;
@@ -444,28 +447,63 @@ __global__ void kernelRenderPixels() {
         invWidth * (static_cast<float>(pixelX) + 0.5f),
         invHeight * (static_cast<float>(pixelY) + 0.5f)
     );
-    float boxL = invWidth * static_cast<float>(pixelX);
-    float boxR = invWidth * static_cast<float>(pixelX + 1);
-    float boxB = invHeight * static_cast<float>(pixelY);
-    float boxT = invHeight * static_cast<float>(pixelY + 1);
 
-    float4 pixelColor = *(float4*)(&cuConstRendererParams.imageData[4 * (pixelY * width + pixelX)]);
+    float boxL = invWidth * static_cast<float>(blockIdx.x*blockDim.x);
+    float boxR = min(invWidth * static_cast<float>((blockIdx.x + 1)*blockDim.x),1.0f);
+    float boxB = invHeight * static_cast<float>(blockIdx.y*blockDim.y);
+    float boxT = min(invHeight * static_cast<float>((blockIdx.y+1)*blockDim.y),1.0f);
 
-    for (int circleIndex = 0; circleIndex < numCircles; circleIndex++) {
-        float3 p = *(float3*)&(cuConstRendererParams.position[circleIndex*3]);
-        float rad = cuConstRendererParams.radius[circleIndex];
+    float4 pixelColor;
+    if(isValidPixel)pixelColor = __ldcs((float4*)(&cuConstRendererParams.imageData[4 * (pixelY * width + pixelX)]));
+    
+    __shared__ float3 ps[BLOCK_SIZE];
+    __shared__ float rads[BLOCK_SIZE];
+    __shared__ unsigned int flags[BLOCK_SIZE];
+    __shared__ unsigned int sums[BLOCK_SIZE];
+    __shared__ unsigned int scratch[2 * BLOCK_SIZE];
+    __shared__ float3 compact_ps[BLOCK_SIZE];
+    __shared__ float compact_rads[BLOCK_SIZE];
+    __shared__ int compact_indices[BLOCK_SIZE];
+    for (int circleIndex = 0; circleIndex < numCircles; circleIndex+=BLOCK_SIZE) {
+	flags[threadId]=0;
+	sums[threadId]=0;
+	if(threadId<numCircles-circleIndex){
+	    float3 p = *((float3*)cuConstRendererParams.position + circleIndex + threadId);
+	    float rad = *(cuConstRendererParams.radius + circleIndex + threadId);
+	    unsigned int flag=circleInBoxConservative(p.x, p.y, rad, boxL, boxR, boxT, boxB);
+	    flags[threadId]=flag;
+	    sums[threadId]=flag;
+            ps[threadId]=p;
+	    rads[threadId]=rad;
+	}
+	__syncthreads();
 
-        if (!circleInBoxConservative(p.x, p.y, rad, boxL, boxR, boxT, boxB)) continue;
+	sharedMemExclusiveScan(threadId, flags, sums, scratch, BLOCK_SIZE);
+	__syncthreads();
 
-        float diffX = p.x - pixelCenter.x;
-        float diffY = p.y - pixelCenter.y;
-        float pixelDist = diffX * diffX + diffY * diffY;
-        float maxDist = rad * rad;
-        if (pixelDist > maxDist) continue;
+	int total =sums[BLOCK_SIZE - 1]+flags[BLOCK_SIZE - 1];
+        if (flags[threadId]) {
+            int pos = sums[threadId];
+            compact_ps[pos] = ps[threadId];
+            compact_rads[pos] = rads[threadId];
+	    compact_indices[pos]=threadId;
+        }
+	__syncthreads();
 
-	shadePixel(circleIndex,pixelDist,p,&pixelColor);
+	if(isValidPixel){
+	    for(int i=0;i<total;++i){
+                float diffX = compact_ps[i].x - pixelCenter.x;
+                float diffY = compact_ps[i].y - pixelCenter.y;
+                float pixelDist = diffX * diffX + diffY * diffY;
+                float maxDist = compact_rads[i] * compact_rads[i];
+                if (pixelDist > maxDist) continue;
+
+                shadePixel(circleIndex+compact_indices[i],pixelDist,compact_ps[i],&pixelColor);
+	    }
+	}
+	__syncthreads();
     }
-    *(float4*)(&cuConstRendererParams.imageData[4 * (pixelY * width + pixelX)]) = pixelColor;
+    if (isValidPixel)__stwt((float4*)(&cuConstRendererParams.imageData[4 * (pixelY * width + pixelX)]), pixelColor);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -696,6 +734,6 @@ CudaRenderer::render() {
         (image->height + blockDim.y - 1) / blockDim.y
     );
 
-    kernelRenderPixels<<<gridDim, blockDim>>>();
+    kernelRenderPixels<256><<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
 }
